@@ -25,6 +25,12 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\\Program Files\\Tesseract-OCR\\tess
 if not os.path.exists(settings.MEDIA_ROOT):
     os.makedirs(settings.MEDIA_ROOT)
 
+def validate_date(date_string):
+    try:
+        return datetime.strptime(date_string, "%d-%m-%Y").date()
+    except ValueError:
+        return None  # Handle invalid date case
+
 def extract_text_from_image(file_path):
     """Extracts text from an image file using Tesseract OCR"""
     img = Image.open(file_path)
@@ -52,16 +58,19 @@ def save_transactions_to_db(transactions):
             print(f"⚠️ Skipping transaction due to missing Value Date: {txn}")
             continue  
 
-        AccountTransaction.objects.create(
-            Serial_No=txn.get("serial_no", 0),
-            Transaction_Date=txn.get("date"),  # Ensure this key matches parsed data
-            Value_Date=value_date,  # Ensure this key matches parsed data
-            Description=txn.get("description", "N/A"),
-            Cheque_Number=txn.get("cheque_number", "N/A"),
-            Debit=txn.get("debit", 0.00),
-            Credit=txn.get("credit", 0.00),
-            Balance=txn.get("balance", 0.00),
-        )
+        try:
+            AccountTransaction.objects.create(
+                Serial_No=txn.get("serial_no", 0),
+                Transaction_Date=txn.get("date"),  # Ensure this key matches parsed data
+                Value_Date=value_date,  # Ensure this key matches parsed data
+                Description=txn.get("description", "N/A"),
+                Cheque_Number=txn.get("cheque_number", "N/A"),
+                Debit=txn.get("debit", 0.00),
+                Credit=txn.get("credit", 0.00),
+                Balance=txn.get("balance", 0.00),
+            )
+        except Exception as e:
+            print("Database Save Error:", e)
 
 def parse_transactions(text):
     """Parses transactions from extracted text and ensures valid date format."""
@@ -87,7 +96,7 @@ def parse_transactions(text):
         description = " ".join(parts[2:-2])  
         debit = float(parts[-2]) if "DR" in line else 0.00
         credit = float(parts[-2]) if "CR" in line else 0.00
-        balance = float(parts[-1])
+        balance = float(parts[-1].replace(',', ''))
 
         transactions.append({
             "date": transaction_date,
@@ -139,7 +148,9 @@ class UploadFileView(APIView):
         text = ""
         with pdfplumber.open(file_path) as pdf:
             for page in pdf.pages:
-                text += page.extract_text() + "\n"
+                page_text = page.extract_text()
+                print(f"📄 Extracted Page Text:\n{page_text}")  # Debugging Output
+                text += page_text + "\n"
         return text
 
     def analyze_transactions(self, text):
@@ -152,6 +163,7 @@ class UploadFileView(APIView):
                 errors.append(line)
 
         return errors
+    
 
 class AnalyzeFileView(APIView):
     def post(self, request, *args, **kwargs):
@@ -182,12 +194,4 @@ class AnalyzeFileView(APIView):
             text = self.extract_text_from_pdf(file_path)
         elif file_path.endswith((".jpg", ".png")):
             text = extract_text_from_image(file_path)
-        return text
-
-    def extract_text_from_pdf(self, file_path):
-        """Extracts text from a PDF file."""
-        text = ""
-        with pdfplumber.open(file_path) as pdf:
-            for page in pdf.pages:
-                text += page.extract_text() + "\n"
         return text
